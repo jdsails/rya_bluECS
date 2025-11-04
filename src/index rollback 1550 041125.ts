@@ -263,25 +263,12 @@ class RouteDrawControl implements maplibregl.IControl {
   private container!: HTMLElement;
   private map?: maplibregl.Map;
   private drawing = false;
-  // For legacy single route editing (active route)
   private waypoints: [number, number][] = [];
   private waypointNames: string[] = [];
   private markers: maplibregl.Marker[] = [];
   private routePanel!: HTMLElement;
   private routeName: string = "Route 1";
   private collapsed: boolean = false;
-  // Route management system
-  private savedRoutes: {
-    name: string;
-    waypoints: [number, number][];
-    waypointNames: string[];
-    visible: boolean;
-    active: boolean;
-    lineLayerId?: string;
-    pointLayerId?: string;
-    sourceId?: string;
-  }[] = [];
-  private activeRouteIndex: number = -1;
 
   onAdd(map: maplibregl.Map) {
     this.map = map;
@@ -302,9 +289,10 @@ class RouteDrawControl implements maplibregl.IControl {
           <button id="route-panel-toggle" title="Collapse">&raquo;</button>
         </div>
         <div id="route-toolbar" style="padding:10px 15px 0 15px;">
-          <button id="route-toolbar-start">New Route</button>
-          <button id="route-toolbar-stop" disabled style="margin-left:6px;">End Route</button>
+          <button id="route-toolbar-start">Start Route</button>
+          <button id="route-toolbar-stop" disabled style="margin-left:6px;">Stop</button>
           <button id="route-toolbar-export" style="margin-left:6px;">Export GPX</button>
+          <button id="route-toolbar-clear" style="margin-left:6px;">Clear</button>
         </div>
         <div id="route-panel-body">
           <div style="margin-bottom:10px;">
@@ -355,59 +343,21 @@ class RouteDrawControl implements maplibregl.IControl {
     const exportBtn = this.routePanel.querySelector(
       "#route-toolbar-export",
     ) as HTMLButtonElement;
+    const clearBtn = this.routePanel.querySelector(
+      "#route-toolbar-clear",
+    ) as HTMLButtonElement;
     startBtn.onclick = () => {
-      // Start new route: reset current editing state, create new empty route, and set as active
       this.drawing = true;
       startBtn.disabled = true;
       stopBtn.disabled = false;
-      // Finalize current editing route if it has waypoints
-      if (this.waypoints.length > 0) {
-        this._finalizeCurrentRoute();
-      }
-      // Clear editing state
-      this.waypoints = [];
-      this.waypointNames = [];
-      for (const m of this.markers) m.remove();
-      this.markers = [];
-      this.routeName = `Route ${this.savedRoutes.length + 1}`;
-      // Add new empty route to savedRoutes and set as active
-      this.savedRoutes.push({
-        name: this.routeName,
-        waypoints: [],
-        waypointNames: [],
-        visible: true,
-        active: true,
-      });
-      this.activeRouteIndex = this.savedRoutes.length - 1;
-      // Set all other routes inactive
-      this.savedRoutes.forEach(
-        (r, i) => (r.active = i === this.activeRouteIndex),
-      );
-      this._syncActiveRouteToEditor();
-      this._renderSavedRoutes();
-      this._updateRoutePanel();
-      this._updateRouteSource();
     };
     stopBtn.onclick = () => {
       this.drawing = false;
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      // Finalize current editing route (save to savedRoutes)
-      this._finalizeCurrentRoute();
-      this._renderSavedRoutes();
-      this._updateRoutePanel();
     };
-    exportBtn.onclick = () => {
-      // Export only the active route
-      if (
-        this.activeRouteIndex >= 0 &&
-        this.activeRouteIndex < this.savedRoutes.length
-      ) {
-        this._exportSavedRoute(this.activeRouteIndex);
-      } else {
-        alert("No active route to export.");
-      }
-    };
+    exportBtn.onclick = () => this.exportGpx();
+    clearBtn.onclick = () => this.clearRoute();
 
     // --- Map click for drawing ---
     map.on("click", (e) => {
@@ -452,35 +402,13 @@ class RouteDrawControl implements maplibregl.IControl {
     });
 
     this._updateRoutePanel();
-    // Load predefined routes from /routes/
+    // Scaffolding for step 5: load predefined routes placeholder
     this._loadPredefinedRoutes();
     return this.container;
   }
 
   addWaypoint(coord: [number, number]) {
     if (!this.map) return;
-    // Always operate on the active route
-    if (
-      this.activeRouteIndex < 0 ||
-      this.activeRouteIndex >= this.savedRoutes.length
-    ) {
-      // If no active route, create one
-      this.routeName = `Route ${this.savedRoutes.length + 1}`;
-      this.savedRoutes.push({
-        name: this.routeName,
-        waypoints: [],
-        waypointNames: [],
-        visible: true,
-        active: true,
-      });
-      this.activeRouteIndex = this.savedRoutes.length - 1;
-      this.savedRoutes.forEach(
-        (r, i) => (r.active = i === this.activeRouteIndex),
-      );
-      this._syncActiveRouteToEditor();
-      this._renderSavedRoutes();
-    }
-    // Add to editor state
     const map = this.map;
     const el = document.createElement("div");
     el.style.cssText =
@@ -493,15 +421,19 @@ class RouteDrawControl implements maplibregl.IControl {
       .setLngLat(coord)
       .addTo(map);
 
+    // Store the waypoint and its marker
     this.waypoints.push(coord);
     this.waypointNames.push("");
     this.markers.push(marker);
 
+    // Set marker title if name exists
     if (this.waypointNames[this.waypoints.length - 1]) {
       marker
         .getElement()
         .setAttribute("title", this.waypointNames[this.waypoints.length - 1]);
     }
+
+    // 🖱️ Hover feedback
     el.addEventListener("mouseenter", () => {
       el.style.boxShadow = "0 0 8px #003366";
       map.getCanvas().style.cursor = "move";
@@ -510,6 +442,8 @@ class RouteDrawControl implements maplibregl.IControl {
       el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.18)";
       map.getCanvas().style.cursor = "";
     });
+
+    // 🧭 Drag behaviour (live update)
     marker.on("drag", () => {
       const newPos = marker.getLngLat();
       const index = this.markers.indexOf(marker);
@@ -528,6 +462,7 @@ class RouteDrawControl implements maplibregl.IControl {
         this._updateRoutePanel();
       }
     });
+    // Right-click (context menu) on this specific marker
     el.addEventListener("contextmenu", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
@@ -542,7 +477,6 @@ class RouteDrawControl implements maplibregl.IControl {
 
   private _updateRouteSource() {
     if (!this.map) return;
-    // Only update the editor "route" source for the active route
     const features: any[] = [];
     for (const [i, p] of this.waypoints.entries()) {
       features.push({
@@ -641,8 +575,6 @@ class RouteDrawControl implements maplibregl.IControl {
       tot += haversineNm(this.waypoints[i - 1], this.waypoints[i]);
     }
     totDiv.textContent = `Total: ${tot.toFixed(2)} NM`;
-    // Render saved routes list
-    this._renderSavedRoutes();
   }
 
   private _calculateBearing(a: [number, number], b: [number, number]): string {
@@ -674,15 +606,40 @@ class RouteDrawControl implements maplibregl.IControl {
   }
 
   exportGpx() {
-    // Deprecated: now handled by _exportSavedRoute
-    if (
-      this.activeRouteIndex >= 0 &&
-      this.activeRouteIndex < this.savedRoutes.length
-    ) {
-      this._exportSavedRoute(this.activeRouteIndex);
-    } else {
-      alert("No active route to export.");
+    if (this.waypoints.length === 0) {
+      alert("No waypoints to export.");
+      return;
     }
+    // Build GPX with named waypoints and track
+    const now = new Date().toISOString();
+    let gpx = `<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx version="1.1" creator="bluECS" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>${now}</time></metadata>
+  <rte>
+    <name>${this.routeName}</name>
+`;
+    for (let i = 0; i < this.waypoints.length; ++i) {
+      const [lon, lat] = this.waypoints[i];
+      const name = this.waypointNames[i] || `WP${i + 1}`;
+      gpx += `    <rtept lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"><name>${this._escapeXml(name)}</name></rtept>\n`;
+    }
+    gpx += `  </rte>
+  <trk>
+    <name>${this.routeName}</name>
+    <trkseg>
+`;
+    for (const p of this.waypoints) {
+      const [lon, lat] = p;
+      gpx += `      <trkpt lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"></trkpt>\n`;
+    }
+    gpx += `    </trkseg>
+  </trk>
+</gpx>`;
+    downloadFile(
+      `${this.routeName.replace(/[^a-zA-Z0-9]/g, "_") || "route"}.gpx`,
+      gpx,
+      "application/gpx+xml",
+    );
   }
 
   private _escapeXml(s: string): string {
@@ -699,18 +656,19 @@ class RouteDrawControl implements maplibregl.IControl {
     );
   }
 
-  // clearRoute() removed: no longer in toolbar
+  clearRoute() {
+    this.waypoints = [];
+    this.waypointNames = [];
+    for (const m of this.markers) m.remove();
+    this.markers = [];
+    this._updateRouteSource();
+    this._updateRoutePanel();
+  }
 
   onRemove() {
     // cleanup listeners if needed
     if (this.routePanel) {
       this.routePanel.remove();
-    }
-    // Remove all saved route layers
-    if (this.map) {
-      for (let i = 0; i < this.savedRoutes.length; ++i) {
-        this._removeRouteLayers(i);
-      }
     }
   }
 
@@ -909,7 +867,6 @@ class RouteDrawControl implements maplibregl.IControl {
     return Math.sqrt((px - projx) * (px - projx) + (py - projy) * (py - projy));
   }
 
-  // Add new CSS for route management UI
   private _injectPanelCSS() {
     if (document.getElementById("route-panel-style")) return;
     const s = document.createElement("style");
@@ -919,7 +876,7 @@ class RouteDrawControl implements maplibregl.IControl {
   position: fixed;
   right: 0;
   top: 0;
-  width: 350px;
+  width: 320px;
   max-width: 95vw;
   height: 100%;
   background: #f7faff;
@@ -1025,452 +982,8 @@ class RouteDrawControl implements maplibregl.IControl {
   color: #074369;
   margin-top: 10px;
 }
-/* Route management sidebar styles */
-.route-item {
-  background: #eaf3fc;
-  margin-bottom: 7px;
-  border-radius: 6px;
-  padding: 7px 9px 7px 9px;
-  cursor: pointer;
-  border: 1px solid #d7e6f3;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  transition: background 0.1s, border 0.1s;
-  position: relative;
-}
-.route-item.active {
-  background: #cfe2fa;
-  border-color: #88b1e7;
-  font-weight: 600;
-}
-.route-item .route-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.route-item input[type=checkbox] {
-  margin-right: 4px;
-  accent-color: #0077b6;
-}
-.route-item-details {
-  font-size: 12px;
-  margin-top: 3px;
-  color: #044;
-  background: #f7fbff;
-  border-radius: 4px;
-  padding: 5px 7px 4px 25px;
-  border-left: 2px solid #b2cbe3;
-}
 `;
     document.head.appendChild(s);
-  }
-
-  // --------- Route Management Implementation ---------
-
-  // Load all .gpx files in /routes/ and add to savedRoutes
-  private async _loadPredefinedRoutes() {
-    try {
-      // Try to get a file list from /routes/
-      // We'll attempt to fetch /routes/index.json (generated by server or build step),
-      // otherwise fallback to a fixed set or fail gracefully.
-      let gpxFiles: string[] = [];
-      try {
-        const indexResp = await fetch("/routes/index.json");
-        if (indexResp.ok) {
-          gpxFiles = await indexResp.json();
-        }
-      } catch (e) {
-        // fallback: try GET /routes/0.gpx, 1.gpx, ... up to 10
-        gpxFiles = [];
-        for (let i = 0; i < 10; ++i) {
-          try {
-            const testUrl = `/routes/${i}.gpx`;
-            const resp = await fetch(testUrl, { method: "HEAD" });
-            if (resp.ok) gpxFiles.push(`${i}.gpx`);
-          } catch {
-            // ignore
-          }
-        }
-      }
-      // If still empty, fallback to static demo
-      if (gpxFiles.length === 0) {
-        // Try to fetch /routes/route1.gpx, /routes/route2.gpx
-        for (let i = 1; i <= 2; ++i) {
-          try {
-            const resp = await fetch(`/routes/route${i}.gpx`, {
-              method: "HEAD",
-            });
-            if (resp.ok) gpxFiles.push(`route${i}.gpx`);
-          } catch {}
-        }
-      }
-      // For each GPX file found, fetch and parse
-      for (const fname of gpxFiles) {
-        try {
-          const resp = await fetch(`/routes/${fname}`);
-          if (!resp.ok) continue;
-          const xml = await resp.text();
-          const parsed = this._parseGpxToWaypoints(xml);
-          if (parsed && parsed.waypoints.length > 0) {
-            this.savedRoutes.push({
-              name: parsed.name || fname.replace(/\.gpx$/i, ""),
-              waypoints: parsed.waypoints,
-              waypointNames: parsed.waypointNames,
-              visible: false,
-              active: false,
-            });
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-      this._renderSavedRoutes();
-    } catch (err) {
-      // ignore
-    }
-  }
-
-  // Parse GPX XML to waypoints and names
-  private _parseGpxToWaypoints(xml: string): {
-    name: string;
-    waypoints: [number, number][];
-    waypointNames: string[];
-  } {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, "application/xml");
-    let name = "";
-    let waypoints: [number, number][] = [];
-    let waypointNames: string[] = [];
-    // Try <rtept> first
-    const rtepts = Array.from(doc.getElementsByTagName("rtept"));
-    if (rtepts.length > 0) {
-      waypoints = rtepts.map((el) => [
-        parseFloat(el.getAttribute("lon") || "0"),
-        parseFloat(el.getAttribute("lat") || "0"),
-      ]);
-      waypointNames = rtepts.map((el) => {
-        const n = el.getElementsByTagName("name");
-        return n.length > 0 ? n[0].textContent || "" : "";
-      });
-    } else {
-      // Try <trkpt>
-      const trkpts = Array.from(doc.getElementsByTagName("trkpt"));
-      waypoints = trkpts.map((el) => [
-        parseFloat(el.getAttribute("lon") || "0"),
-        parseFloat(el.getAttribute("lat") || "0"),
-      ]);
-      waypointNames = trkpts.map(() => "");
-    }
-    // Try to get route name
-    const nameElem = doc.querySelector("rte > name, trk > name, gpx > name");
-    if (nameElem && nameElem.textContent) {
-      name = nameElem.textContent;
-    }
-    return { name, waypoints, waypointNames };
-  }
-
-  // Render the saved routes list in sidebar
-  private _renderSavedRoutes() {
-    const listDiv = this.routePanel?.querySelector(
-      "#saved-routes-list",
-    ) as HTMLElement;
-    if (!listDiv) return;
-    listDiv.innerHTML = "";
-    if (this.savedRoutes.length === 0) {
-      listDiv.innerHTML = `<div style="color:#888;font-style:italic;">No saved routes</div>`;
-      return;
-    }
-    this.savedRoutes.forEach((route, idx) => {
-      const div = document.createElement("div");
-      div.className = "route-item" + (route.active ? " active" : "");
-      // Show on Chart checkbox
-      const visibleBox = document.createElement("input");
-      visibleBox.type = "checkbox";
-      visibleBox.checked = !!route.visible;
-      visibleBox.title = "Show on Chart";
-      visibleBox.onclick = (ev) => {
-        ev.stopPropagation();
-        this._toggleRouteVisibility(idx);
-      };
-      // Route name clickable
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = route.name;
-      nameSpan.style.flex = "1";
-      nameSpan.style.userSelect = "none";
-      nameSpan.style.marginLeft = "5px";
-      nameSpan.style.fontWeight = route.active ? "700" : "500";
-      // Expand/collapse details
-      let expanded = !!route.active;
-      const detailsDiv = document.createElement("div");
-      detailsDiv.className = "route-item-details";
-      detailsDiv.style.display = expanded ? "block" : "none";
-      detailsDiv.innerHTML = `
-        Waypoints: ${route.waypoints.length}
-        <br>Total: ${this._routeTotalDistance(route).toFixed(2)} NM
-      `;
-      nameSpan.onclick = (ev) => {
-        ev.stopPropagation();
-        expanded = !expanded;
-        detailsDiv.style.display = expanded ? "block" : "none";
-        this._setActiveRoute(idx);
-      };
-      // Actions: Export, Delete
-      const actions = document.createElement("span");
-      actions.className = "route-actions";
-      // Export button
-      const exportBtn = document.createElement("button");
-      exportBtn.textContent = "Export";
-      exportBtn.title = "Export GPX";
-      exportBtn.onclick = (ev) => {
-        ev.stopPropagation();
-        this._exportSavedRoute(idx);
-      };
-      // Delete button
-      const delBtn = document.createElement("button");
-      delBtn.textContent = "Delete";
-      delBtn.title = "Delete Route";
-      delBtn.style.color = "#a33";
-      delBtn.onclick = (ev) => {
-        ev.stopPropagation();
-        this._deleteSavedRoute(idx);
-      };
-      actions.appendChild(exportBtn);
-      actions.appendChild(delBtn);
-      div.appendChild(visibleBox);
-      div.appendChild(nameSpan);
-      div.appendChild(actions);
-      div.appendChild(detailsDiv);
-      // Clicking anywhere else on route item sets as active and expands
-      div.onclick = () => {
-        expanded = !expanded;
-        detailsDiv.style.display = expanded ? "block" : "none";
-        this._setActiveRoute(idx);
-      };
-      listDiv.appendChild(div);
-    });
-  }
-
-  // Set one route as active, update editing state
-  private _setActiveRoute(index: number) {
-    if (index < 0 || index >= this.savedRoutes.length) return;
-    this.savedRoutes.forEach((r, i) => (r.active = i === index));
-    this.activeRouteIndex = index;
-    this._syncActiveRouteToEditor();
-    this._renderSavedRoutes();
-    this._updateRoutePanel();
-    this._updateRouteSource();
-  }
-
-  // Sync editor state to currently active route
-  private _syncActiveRouteToEditor() {
-    // Remove all markers
-    for (const m of this.markers) m.remove();
-    this.markers = [];
-    if (
-      this.activeRouteIndex >= 0 &&
-      this.activeRouteIndex < this.savedRoutes.length
-    ) {
-      const route = this.savedRoutes[this.activeRouteIndex];
-      this.routeName = route.name;
-      // Deep copy
-      this.waypoints = route.waypoints.map((p) => [...p]);
-      this.waypointNames = [...route.waypointNames];
-      // Add markers for waypoints
-      for (const coord of this.waypoints) {
-        this.addWaypoint(coord);
-      }
-      // Remove duplicate points (since addWaypoint pushes)
-      if (this.markers.length > this.waypoints.length) {
-        this.markers.splice(this.waypoints.length).forEach((m) => m.remove());
-      }
-    } else {
-      this.routeName = "";
-      this.waypoints = [];
-      this.waypointNames = [];
-    }
-  }
-
-  // Toggle route line visibility on map
-  private _toggleRouteVisibility(index: number) {
-    if (!this.map) return;
-    const route = this.savedRoutes[index];
-    route.visible = !route.visible;
-    if (route.visible) {
-      this._addRouteLayers(index);
-    } else {
-      this._removeRouteLayers(index);
-    }
-    this._renderSavedRoutes();
-  }
-
-  // Add route line/point layers to map for this route
-  private _addRouteLayers(index: number) {
-    if (!this.map) return;
-    const route = this.savedRoutes[index];
-    // Remove old layers if any
-    this._removeRouteLayers(index);
-    const sourceId = `route-src-${index}`;
-    const lineLayerId = `route-line-${index}`;
-    const pointLayerId = `route-points-${index}`;
-    // Add GeoJSON source
-    const features: any[] = [];
-    if (route.waypoints.length >= 2) {
-      features.push({
-        type: "Feature",
-        geometry: { type: "LineString", coordinates: route.waypoints },
-        properties: {},
-      });
-    }
-    for (let i = 0; i < route.waypoints.length; ++i) {
-      features.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: route.waypoints[i] },
-        properties: { name: route.waypointNames[i] || "" },
-      });
-    }
-    this.map.addSource(sourceId, {
-      type: "geojson",
-      data: { type: "FeatureCollection", features },
-    });
-    this.map.addLayer({
-      id: lineLayerId,
-      type: "line",
-      source: sourceId,
-      paint: {
-        "line-color": "#0077b6",
-        "line-width": 3,
-        "line-dasharray": [2, 2],
-      },
-    });
-    this.map.addLayer({
-      id: pointLayerId,
-      type: "circle",
-      source: sourceId,
-      paint: {
-        "circle-radius": 6,
-        "circle-color": "#2a7ecf",
-        "circle-stroke-color": "#fff",
-        "circle-stroke-width": 2,
-      },
-    });
-    route.sourceId = sourceId;
-    route.lineLayerId = lineLayerId;
-    route.pointLayerId = pointLayerId;
-  }
-
-  // Remove route line/point layers from map
-  private _removeRouteLayers(index: number) {
-    if (!this.map) return;
-    const route = this.savedRoutes[index];
-    if (route.lineLayerId && this.map.getLayer(route.lineLayerId)) {
-      this.map.removeLayer(route.lineLayerId);
-    }
-    if (route.pointLayerId && this.map.getLayer(route.pointLayerId)) {
-      this.map.removeLayer(route.pointLayerId);
-    }
-    if (route.sourceId && this.map.getSource(route.sourceId)) {
-      this.map.removeSource(route.sourceId);
-    }
-    route.lineLayerId = undefined;
-    route.pointLayerId = undefined;
-    route.sourceId = undefined;
-  }
-
-  // Delete a saved route and its map layers
-  private _deleteSavedRoute(index: number) {
-    if (!this.map) return;
-    this._removeRouteLayers(index);
-    this.savedRoutes.splice(index, 1);
-    // If deleted route was active, select another or clear
-    if (this.activeRouteIndex === index) {
-      if (this.savedRoutes.length > 0) {
-        this.activeRouteIndex = 0;
-        this.savedRoutes.forEach((r, i) => (r.active = i === 0));
-        this._syncActiveRouteToEditor();
-      } else {
-        this.activeRouteIndex = -1;
-        this.routeName = "";
-        this.waypoints = [];
-        this.waypointNames = [];
-        for (const m of this.markers) m.remove();
-        this.markers = [];
-      }
-    } else if (this.activeRouteIndex > index) {
-      this.activeRouteIndex--;
-    }
-    this._renderSavedRoutes();
-    this._updateRoutePanel();
-    this._updateRouteSource();
-  }
-
-  // Export a saved route to GPX
-  private _exportSavedRoute(index: number) {
-    const route = this.savedRoutes[index];
-    if (!route || route.waypoints.length === 0) {
-      alert("No waypoints to export.");
-      return;
-    }
-    // Build GPX with named waypoints and track
-    const now = new Date().toISOString();
-    let gpx = `<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
-<gpx version="1.1" creator="bluECS" xmlns="http://www.topografix.com/GPX/1/1">
-  <metadata><time>${now}</time></metadata>
-  <rte>
-    <name>${this._escapeXml(route.name)}</name>
-`;
-    for (let i = 0; i < route.waypoints.length; ++i) {
-      const [lon, lat] = route.waypoints[i];
-      const name = route.waypointNames[i] || `WP${i + 1}`;
-      gpx += `    <rtept lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"><name>${this._escapeXml(name)}</name></rtept>\n`;
-    }
-    gpx += `  </rte>
-  <trk>
-    <name>${this._escapeXml(route.name)}</name>
-    <trkseg>
-`;
-    for (const p of route.waypoints) {
-      const [lon, lat] = p;
-      gpx += `      <trkpt lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"></trkpt>\n`;
-    }
-    gpx += `    </trkseg>
-  </trk>
-</gpx>`;
-    downloadFile(
-      `${route.name.replace(/[^a-zA-Z0-9]/g, "_") || "route"}.gpx`,
-      gpx,
-      "application/gpx+xml",
-    );
-  }
-
-  // Finalize the current editing route and save to savedRoutes
-  private _finalizeCurrentRoute() {
-    if (
-      this.activeRouteIndex >= 0 &&
-      this.activeRouteIndex < this.savedRoutes.length
-    ) {
-      this.savedRoutes[this.activeRouteIndex].name = this.routeName;
-      this.savedRoutes[this.activeRouteIndex].waypoints = this.waypoints.map(
-        (p) => [...p],
-      );
-      this.savedRoutes[this.activeRouteIndex].waypointNames = [
-        ...this.waypointNames,
-      ];
-      this.savedRoutes[this.activeRouteIndex].visible = true;
-      this.savedRoutes[this.activeRouteIndex].active = true;
-      // Add layers if visible
-      if (this.savedRoutes[this.activeRouteIndex].visible) {
-        this._addRouteLayers(this.activeRouteIndex);
-      }
-    }
-  }
-
-  private _routeTotalDistance(route: { waypoints: [number, number][] }) {
-    let tot = 0;
-    for (let i = 1; i < route.waypoints.length; ++i) {
-      tot += haversineNm(route.waypoints[i - 1], route.waypoints[i]);
-    }
-    return tot;
   }
 }
 

@@ -1,7 +1,3 @@
-/* Revised index.ts — fixes MaplibreInspect timing, route-manager sync, robust predefined route loading,
-   keeps UI and styling intact (route panel, context menus, GPX export, measure, cursor).
-*/
-
 import * as maplibregl from "maplibre-gl";
 import "@maplibre/maplibre-gl-inspect/dist/maplibre-gl-inspect.css";
 import "maplibre-gl/dist/maplibre-gl.css";

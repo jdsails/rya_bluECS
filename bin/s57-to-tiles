@@ -13,7 +13,7 @@ case "$ext" in
     format="PMTiles"
     ;;
   mbtiles)
-    format="MBV"
+    format="MBTiles"
     ;;
   *)
     echo "Output format must be .mbtiles or .pmtiles"

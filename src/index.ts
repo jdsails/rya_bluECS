@@ -1369,6 +1369,28 @@ map.on("load", () => {
     } catch (err) {
       console.warn("[map] failed to add MaplibreInspect:", err);
     }
+
+    // --- Keep route panel visible in fullscreen ---
+    document.addEventListener("fullscreenchange", () => {
+      const mapContainer = document.getElementById("map");
+      const panel = document.getElementById("route-panel");
+      if (!mapContainer || !panel) return;
+
+      if (document.fullscreenElement === mapContainer) {
+        // we just entered fullscreen → move the panel inside the map container
+        mapContainer.appendChild(panel);
+        panel.style.position = "absolute";
+        panel.style.right = "0";
+        panel.style.top = "0";
+        panel.style.zIndex = "11000";
+      } else {
+        // we exited fullscreen → move panel back to body
+        document.body.appendChild(panel);
+        panel.style.position = "fixed";
+        panel.style.right = "0";
+        panel.style.top = "0";
+      }
+    });
   });
 
   // small style tag for control aesthetics

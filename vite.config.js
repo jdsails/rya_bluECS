@@ -15,8 +15,8 @@ export default defineConfig({
   plugins: [
     copy({
       targets: [
-        { src: "src/routes/*", dest: "dist/routes" },
-        { src: "src/tiles/*", dest: "dist/charts" },
+        { src: "src/preloaded_routes/*", dest: "dist/routes" },
+        { src: "src/source_tiles/*", dest: "dist/charts" },
       ],
       hook: "writeBundle",
     }),

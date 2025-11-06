@@ -43,7 +43,7 @@ Project will be in dist file. You may need to edit vite.config.js
 
 ## Demo
 
-- https://www.james-davies.co.uk/bluECS.html
+- https://www.james-davies.co.uk/bluECS
 
 ## License
 

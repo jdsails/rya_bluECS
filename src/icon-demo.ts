@@ -61,7 +61,7 @@ iconNames.forEach((name) => {
   deployBtn.style.fontSize = "12px";
   deployBtn.style.cursor = "pointer";
   deployBtn.onclick = () => {
-    const deployHTML = `<obc-icon-button id="change" title="title" disabled><obi-${name}></obi-${name}></obc-icon-button>`;
+    const deployHTML = `<obc-icon-button id="change" title="title"><obi-${name}></obi-${name}></obc-icon-button>`;
     navigator.clipboard.writeText(deployHTML);
     deployBtn.textContent = "✓";
     setTimeout(() => (deployBtn.textContent = "d"), 1000);

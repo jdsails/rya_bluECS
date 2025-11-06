@@ -2,6 +2,8 @@ import "@maplibre/maplibre-gl-inspect/dist/maplibre-gl-inspect.css";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { NavigationControl, FullscreenControl, Popup } from "maplibre-gl";
 import MaplibreInspect from "@maplibre/maplibre-gl-inspect";
+import "@oicl/openbridge-webcomponents/dist";
+import "@oicl/openbridge-webcomponents/src/palettes/variables.css";
 import { initMap } from "./map/setup";
 import { CursorCoordControl, MeasureControl } from "./map/controls";
 import { BOUNDS } from "./map/bounds";

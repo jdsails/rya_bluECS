@@ -1,5 +1,7 @@
 import { haversineNm, formatLatLonForDisplay } from "../utils/geo";
+import { getCssVar } from "../utils/helpers";
 import * as maplibregl from "maplibre-gl";
+import "@oicl/openbridge-webcomponents/src/palettes/variables.css";
 /* --- Cursor control --- */
 export class CursorCoordControl implements maplibregl.IControl {
   private container!: HTMLElement;
@@ -32,19 +34,51 @@ export class MeasureControl implements maplibregl.IControl {
     this.map = map;
     this.container = document.createElement("div");
     this.container.className = "maplibregl-ctrl measure-control";
-    this.container.style.cssText =
-      "background: rgba(255,255,255,0.9); padding:6px; border-radius:4px;";
-    const btn = document.createElement("button");
-    btn.textContent = "Measure (NM)";
-    btn.title = "Click to toggle measure mode. Click map to add points.";
-    btn.style.cursor = "pointer";
-    btn.onclick = () => this.toggle();
-    const clear = document.createElement("button");
-    clear.textContent = "Clear";
-    clear.style.marginLeft = "6px";
-    clear.onclick = () => this.clear();
-    this.container.appendChild(btn);
-    this.container.appendChild(clear);
+    this.container.style.background = getCssVar("--obc-blue-000", "#f7faff");
+    this.container.style.padding = "6px";
+    this.container.style.borderRadius = "4px";
+    this.container.style.display = "flex";
+    this.container.style.alignItems = "center";
+    this.container.style.position = "relative";
+
+    // Main measure button
+    const measureBtn = document.createElement("obc-icon-button");
+    measureBtn.title = "Measure (NM)";
+    measureBtn.innerHTML = `<obi-route-planning></obi-route-planning>`;
+    measureBtn.onclick = () => this.toggle(measureBtn, toolbox);
+
+    // Toolbox panel (clear + reverse)
+    const toolbox = document.createElement("div");
+    toolbox.className = "measure-toolbox";
+    toolbox.style.display = "none";
+    toolbox.style.position = "absolute";
+    toolbox.style.left = "60px";
+    toolbox.style.top = "3px";
+    toolbox.style.transition = "opacity .2s";
+    toolbox.style.opacity = "0";
+    toolbox.style.zIndex = "2";
+    toolbox.style.background = getCssVar("--obc-blue-000", "#f7faff");
+    toolbox.style.borderRadius = "0px 4px 4px 0px";
+    toolbox.style.boxShadow = "0 2px 8px rgba(0,0,0,0.07)";
+    toolbox.style.padding = "3px 6px 3px 0px";
+
+    // Clear button
+    const clearBtn = document.createElement("obc-icon-button");
+    clearBtn.title = "Clear";
+    clearBtn.innerHTML = `<obi-cursor-delete-icon></obi-cursor-delete-icon>`;
+    clearBtn.onclick = () => this.clear();
+
+    // Reverse button
+    const reverseBtn = document.createElement("obc-icon-button");
+    reverseBtn.title = "Reverse";
+    reverseBtn.innerHTML = `<obi-arrow-bidirectional-horizontal></obi-arrow-bidirectional-horizontal>`;
+    reverseBtn.onclick = () => this.reverse();
+
+    toolbox.appendChild(clearBtn);
+    toolbox.appendChild(reverseBtn);
+
+    this.container.appendChild(measureBtn);
+    this.container.appendChild(toolbox);
 
     map.on("click", (e) => {
       if (!this.active) return;
@@ -63,13 +97,19 @@ export class MeasureControl implements maplibregl.IControl {
         id: "measure-line",
         type: "line",
         source: "measure",
-        paint: { "line-color": "#FF0000", "line-width": 2 },
+        paint: {
+          "line-color": getCssVar("--obc-blue-300", "#88b1e7"),
+          "line-width": 2,
+        },
       });
       map.addLayer({
         id: "measure-points",
         type: "circle",
         source: "measure",
-        paint: { "circle-radius": 5, "circle-color": "#FF0000" },
+        paint: {
+          "circle-radius": 5,
+          "circle-color": getCssVar("--obc-blue-200", "#88b1e7"),
+        },
       });
     }
     return this.container;
@@ -77,10 +117,20 @@ export class MeasureControl implements maplibregl.IControl {
 
   onRemove() {}
 
-  toggle() {
+  toggle(measureBtn: HTMLElement, toolbox: HTMLElement) {
     this.active = !this.active;
-    (this.container.querySelector("button") as HTMLElement).style.fontWeight =
-      this.active ? "700" : "400";
+    if (this.active) {
+      measureBtn.style.background = getCssVar("--obc-blue-200", "#eaf3fc");
+      measureBtn.style.fontWeight = "700";
+      toolbox.style.display = "flex";
+      setTimeout(() => (toolbox.style.opacity = "1"), 10);
+    } else {
+      measureBtn.style.background = "";
+      measureBtn.style.fontWeight = "400";
+      toolbox.style.opacity = "0";
+      setTimeout(() => (toolbox.style.display = "none"), 200);
+      this.clear();
+    }
   }
 
   clear() {
@@ -89,25 +139,92 @@ export class MeasureControl implements maplibregl.IControl {
     this._updatePopup(true);
   }
 
+  reverse() {
+    this.pts.reverse();
+    this._updateLayer();
+    this._updatePopup();
+  }
+
   private _updateLayer() {
     if (!this.map) return;
     const features: any[] = [];
+    // Points (only actual waypoints, not label points)
     for (const p of this.pts)
       features.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: p },
-        properties: {},
+        properties: { isWaypoint: true },
       });
-    if (this.pts.length >= 2)
+    // Lines and segment labels
+    if (this.pts.length >= 2) {
       features.push({
         type: "Feature",
         geometry: { type: "LineString", coordinates: this.pts },
         properties: {},
       });
+      // Add segment labels (not waypoints)
+      for (let i = 1; i < this.pts.length; i++) {
+        const start = this.pts[i - 1];
+        const end = this.pts[i];
+        const dist = haversineNm(start, end).toFixed(2);
+        const bearing = this._calculateBearing(start, end);
+        const mid = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: mid },
+          properties: {
+            label: `${dist} NM / ${bearing}`,
+            isWaypoint: false,
+          },
+        });
+      }
+    }
     const src = this.map.getSource("measure") as
       | maplibregl.GeoJSONSource
       | undefined;
     if (src) src.setData({ type: "FeatureCollection", features });
+
+    // Add label layer if not present
+    if (this.map && !this.map.getLayer("measure-labels")) {
+      this.map.addLayer({
+        id: "measure-labels",
+        type: "symbol",
+        source: "measure",
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 12,
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-offset": [0, 1.2],
+        },
+        paint: {
+          "text-color": getCssVar("--obc-blue-400", "#074369"),
+          "text-halo-color": "#fff",
+          "text-halo-width": 1,
+        },
+        filter: ["has", "label"],
+      });
+    }
+
+    // Update measure-points layer to only show waypoints
+    if (this.map && this.map.getLayer("measure-points")) {
+      this.map.setFilter("measure-points", ["==", ["get", "isWaypoint"], true]);
+    }
+  }
+
+  private _calculateBearing(a: [number, number], b: [number, number]): string {
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const toDeg = (r: number) => (r * 180) / Math.PI;
+    const lat1 = toRad(a[1]);
+    const lat2 = toRad(b[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x =
+      Math.cos(lat1) * Math.sin(lat2) -
+      Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    let brng = Math.atan2(y, x);
+    brng = toDeg(brng);
+    brng = (brng + 360) % 360;
+    return `${brng.toFixed(0)}°`;
   }
 
   private _updatePopup(clear = false) {

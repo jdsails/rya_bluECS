@@ -10,6 +10,8 @@
 - [s52](./packages/s52/) - The S-52 Presentation Library in JSON format
 - [dai](./packages/dai/) - Parser for S-52 .dai file
 
+> Includes Ocean Industries Concept Lab UI visuals from OpenBridge. Installed as an NPM module and generated on the map. Has a 'helper' to identify which icons and components are available for easy code drop in.
+
 # Contributing
 
 ```sh
@@ -40,6 +42,7 @@ Project will be in dist file. You may need to edit vite.config.js
 - https://github.com/LarsSchy/SMAC-M
 - https://github.com/manimaul/njord
 - https://github.com/bkeepers/enc-tiles
+- https://github.com/Ocean-Industries-Concept-Lab/openbridge-webcomponents
 
 ## Demo
 

@@ -39,10 +39,10 @@ export class RouteDrawControl implements maplibregl.IControl {
       this.routePanel.innerHTML = `
         <div id="route-panel-header">
           <span id="route-panel-title">Route Manager</span>
-          <button id="route-panel-toggle" title="Collapse">&raquo;</button>
+          <obc-icon-button id="route-panel-toggle" title="Collapse"><obi-chevron-double-right-google></obi-chevron-double-right-google></pbc-icon-button>
         </div>
         <div id="route-toolbar" style="padding:10px 15px 0 15px; display:flex; gap:6px; align-items:center;">
-          <obc-icon-button id="route-toolbar-start" title="Start New Route"><obi-route></obi-route></obc-icon-button>
+          <obc-icon-button id="route-toolbar-start" title="Start New Route"><obi-navigation-route></obi-navigation-route></obc-icon-button>
           <obc-icon-button id="route-toolbar-stop" title="End Route" disabled><obi-generic-line-end-point></obi-generic-line-end-point></obc-icon-button>
           <obc-icon-button id="route-toolbar-export" title="Export GPX"><obi-route-export-iec></obi-route-export-iec></obc-icon-button>
 </div>
@@ -70,11 +70,12 @@ export class RouteDrawControl implements maplibregl.IControl {
       this.collapsed = !this.collapsed;
       if (this.collapsed) {
         this.routePanel.classList.add("collapsed");
-        toggleBtn.innerHTML = "&laquo;";
+        toggleBtn.innerHTML = "<obi-route></obi-route>";
         toggleBtn.title = "Expand";
       } else {
         this.routePanel.classList.remove("collapsed");
-        toggleBtn.innerHTML = "&raquo;";
+        toggleBtn.innerHTML =
+          "<obi-chevron-double-right-google></obi-chevron-double-right-google>";
         toggleBtn.title = "Collapse";
       }
     };
@@ -536,9 +537,15 @@ export class RouteDrawControl implements maplibregl.IControl {
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
 
-    const createMenuItem = (text: string, onClick: () => void) => {
+    const createMenuItem = (
+      iconTag: string,
+      label: string,
+      onClick: () => void,
+    ) => {
       const item = document.createElement("div");
-      item.textContent = text;
+      item.style.display = "flex";
+      item.style.alignItems = "center";
+      item.style.gap = "8px";
       item.style.padding = "7px 18px";
       item.style.cursor = "pointer";
       item.style.userSelect = "none";
@@ -554,12 +561,34 @@ export class RouteDrawControl implements maplibregl.IControl {
         onClick();
         menu.remove();
       });
+
+      // Create the icon button
+      const iconBtn = document.createElement("obc-icon-button");
+      iconBtn.innerHTML = `<${iconTag} size="small"></${iconTag}>`;
+      iconBtn.style.pointerEvents = "none"; // prevent double click
+      iconBtn.style.marginRight = "0px";
+      iconBtn.style.width = "auto";
+      iconBtn.style.height = "auto";
+      iconBtn.style.display = "flex";
+      iconBtn.style.alignItems = "center";
+      iconBtn.style.justifyContent = "center";
+
+      // Label span
+      const labelSpan = document.createElement("span");
+      labelSpan.textContent = label;
+      labelSpan.className = "context-menu-label";
+      labelSpan.style.paddingLeft = "6px";
+
+      item.style.padding = "4px 12px";
+      item.appendChild(iconBtn);
+      item.appendChild(labelSpan);
+
       return item;
     };
 
     if (type === "line") {
       menu.appendChild(
-        createMenuItem("Add Waypoint", () => {
+        createMenuItem("obi-waypoint-add-iec", "Add Waypoint", () => {
           const coord: [number, number] = [e.lngLat.lng, e.lngLat.lat];
           this._addWaypointAtNearestSegment(coord);
         }),
@@ -578,7 +607,7 @@ export class RouteDrawControl implements maplibregl.IControl {
       }
       if (nearestIndex === -1) return;
       menu.appendChild(
-        createMenuItem("Name Waypoint", () => {
+        createMenuItem("obi-waypoint-edit-iec", "Name Waypoint", () => {
           const currentName = this.waypointNames[nearestIndex] || "";
           const newName = prompt("Enter waypoint name:", currentName);
           if (newName !== null) {
@@ -600,11 +629,23 @@ export class RouteDrawControl implements maplibregl.IControl {
         }),
       );
       menu.appendChild(
-        createMenuItem("Delete Waypoint", () => {
+        createMenuItem("obi-waypoint-delete-iec", "Delete Waypoint", () => {
           this._deleteWaypoint(nearestIndex);
         }),
       );
     }
+
+    // Responsive: hide label on small screens
+    const styleTag = document.createElement("style");
+    styleTag.textContent = `
+      @media (max-width: 600px) {
+        .context-menu-label { display: none; }
+      }
+      @media (min-width: 601px) {
+        .context-menu-label { display: inline; }
+      }
+    `;
+    menu.appendChild(styleTag);
 
     this.map.getContainer().appendChild(menu);
     const onClickOutside = (ev: MouseEvent) => {
@@ -633,15 +674,14 @@ export class RouteDrawControl implements maplibregl.IControl {
     return Math.hypot(px - projx, py - projy);
   }
 
-  injectPanelCSS();
-
   // more robust predefined route loader with logs — expects /routes/index.json or route1.gpx etc.
   private async _loadPredefinedRoutes() {
     if (!this.map) return;
     console.debug("[routes] loading predefined routes...");
+    const routePath = import.meta.env.VITE_ROUTE_PATH;
     let gpxFiles: string[] = [];
     try {
-      const indexResp = await fetch("./preloaded_routes/index.json");
+      const indexResp = await fetch(`${routePath}/index.json`);
       if (indexResp.ok) {
         gpxFiles = await indexResp.json();
         console.debug("[routes] index.json found:", gpxFiles);
@@ -656,7 +696,7 @@ export class RouteDrawControl implements maplibregl.IControl {
       // try common names route1..route10
       for (let i = 1; i <= 10; i++) {
         try {
-          const u = `./preloaded_routes/route${i}.gpx`;
+          const u = `${routePath}/route${i}.gpx`;
           const r = await fetch(u, { method: "HEAD" });
           if (r.ok) {
             gpxFiles.push(`route${i}.gpx`);
@@ -668,11 +708,14 @@ export class RouteDrawControl implements maplibregl.IControl {
     }
 
     if (gpxFiles.length === 0)
-      console.debug("[routes] no predefined GPX files discovered in ./routes/");
+      console.debug(
+        "[routes] no predefined GPX files discovered in ",
+        routePath,
+      );
 
     for (const fname of gpxFiles) {
       try {
-        const resp = await fetch(`./preloaded_routes/${fname}`);
+        const resp = await fetch(`${routePath}/${fname}`);
         if (!resp.ok) {
           console.warn(`[routes] failed to fetch ${fname}: ${resp.status}`);
           continue;
@@ -686,6 +729,7 @@ export class RouteDrawControl implements maplibregl.IControl {
             waypointNames: parsed.waypointNames,
             visible: false,
             active: false,
+            preloaded: true,
           });
           console.debug(
             `[routes] loaded ${fname} (${parsed.waypoints.length} wpts)`,
@@ -744,17 +788,29 @@ export class RouteDrawControl implements maplibregl.IControl {
     this.savedRoutes.forEach((route, idx) => {
       const div = document.createElement("div");
       div.className = "route-item" + (route.active ? " active" : "");
-      const visibleBox = document.createElement("input");
-      visibleBox.type = "checkbox";
-      visibleBox.checked = !!route.visible;
-      visibleBox.title = "Show on Chart";
-      visibleBox.onclick = (ev) => {
+
+      // Visibility toggle button (OpenBridge)
+      const visibleBtn = document.createElement("obc-icon-button");
+      visibleBtn.title = route.visible ? "Hide on Chart" : "Show on Chart";
+      visibleBtn.innerHTML = route.visible
+        ? `<obi-checkbox-checked-filled size="small"></obi-checkbox-checked-filled>`
+        : `<obi-checkbox-uncheck-google size="small"></obi-checkbox-uncheck-google>`;
+      visibleBtn.onclick = (ev) => {
         ev.stopPropagation();
         this._toggleRouteVisibility(idx);
+        // Update icon and title after toggling
+        const isVisible = this.savedRoutes[idx].visible;
+        visibleBtn.innerHTML = isVisible
+          ? `<obi-checkbox-checked-filled size="small"></obi-checkbox-checked-filled>`
+          : `<obi-checkbox-uncheck-google size="small"></obi-checkbox-uncheck-google>`;
+        visibleBtn.title = isVisible ? "Hide on Chart" : "Show on Chart";
       };
 
+      // Route name span
       const nameSpan = document.createElement("span");
-      nameSpan.textContent = route.name;
+      nameSpan.textContent =
+        route.name +
+        (route.preloaded && route.active ? " (copy - rename)" : "");
       nameSpan.style.flex = "1";
       nameSpan.style.userSelect = "none";
       nameSpan.style.marginLeft = "5px";
@@ -773,6 +829,7 @@ export class RouteDrawControl implements maplibregl.IControl {
         this._setActiveRoute(idx);
       };
 
+      // Actions
       const actions = document.createElement("span");
       actions.className = "route-actions";
 
@@ -786,20 +843,36 @@ export class RouteDrawControl implements maplibregl.IControl {
         this._exportSavedRoute(idx);
       };
 
-      // Delete button (OpenBridge)
-      const delBtn = document.createElement("obc-icon-button");
-      delBtn.id = `route-delete-${route.name.replace(/[^a-zA-Z0-9]/g, "_")}`;
-      delBtn.title = `Delete Route ${route.name}`;
-      delBtn.innerHTML = `<obi-delete-google></obi-delete-google>`;
-      delBtn.onclick = (ev) => {
-        ev.stopPropagation();
-        this._deleteSavedRoute(idx);
-      };
+      // Save Edits button for active route
+      if (route.preloaded && route.active) {
+        const saveBtn = document.createElement("obc-icon-button");
+        saveBtn.id = `route-save-${route.name.replace(/[^a-zA-Z0-9]/g, "_")}`;
+        saveBtn.title = `Save Edits to ${route.name}`;
+        saveBtn.innerHTML = `<obi-save-proposal></obi-save-proposal>`;
+        saveBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          // Implement save logic here
+          this._saveEditedRoute(idx);
+        };
+        actions.appendChild(saveBtn);
+      }
+
+      // Delete button (OpenBridge) — only for non-preloaded routes
+      if (!route.preloaded) {
+        const delBtn = document.createElement("obc-icon-button");
+        delBtn.id = `route-delete-${route.name.replace(/[^a-zA-Z0-9]/g, "_")}`;
+        delBtn.title = `Delete Route ${route.name}`;
+        delBtn.innerHTML = `<obi-delete-google></obi-delete-google>`;
+        delBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          this._deleteSavedRoute(idx);
+        };
+        actions.appendChild(delBtn);
+      }
 
       actions.appendChild(exportBtn);
-      actions.appendChild(delBtn);
 
-      div.appendChild(visibleBox);
+      div.appendChild(visibleBtn);
       div.appendChild(nameSpan);
       div.appendChild(actions);
       div.appendChild(detailsDiv);
@@ -811,6 +884,21 @@ export class RouteDrawControl implements maplibregl.IControl {
       };
 
       listDiv.appendChild(div);
+    });
+
+    // Dynamic name updating on blur
+    const nameInput = this.routePanel.querySelector(
+      "#route-name-input",
+    ) as HTMLInputElement;
+    nameInput.addEventListener("blur", () => {
+      this.routeName = nameInput.value;
+      if (
+        this.activeRouteIndex >= 0 &&
+        this.activeRouteIndex < this.savedRoutes.length
+      ) {
+        this.savedRoutes[this.activeRouteIndex].name = this.routeName;
+        this._renderSavedRoutes();
+      }
     });
   }
 

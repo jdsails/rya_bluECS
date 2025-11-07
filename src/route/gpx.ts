@@ -39,7 +39,7 @@ export function exportGpx(routeName: string, waypoints: [number, number][]) {
   );
 }
 
-export function exportSavedRoute(route: {
+export function exportRoute(route: {
   name: string;
   waypoints: [number, number][];
   waypointNames: string[];

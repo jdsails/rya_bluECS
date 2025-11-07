@@ -17,3 +17,4 @@ import "@oicl/openbridge-webcomponents/dist/icons/icon-cursor-delete-icon";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-chevron-double-left-google";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-chevron-double-right-google";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-navigation-route";
+import "@oicl/openbridge-webcomponents/dist/components/input/input";

@@ -7,7 +7,7 @@ import "@oicl/openbridge-webcomponents/src/palettes/variables.css";
 import { initMap } from "./map/setup";
 import { CursorCoordControl, MeasureControl } from "./map/controls";
 import { BOUNDS } from "./map/bounds";
-import { RouteDrawControl } from "./route/manager";
+import { RouteDrawControl } from "./route/manager_simplified";
 import "./ui/openbridge";
 import { keepPanelVisibleInFullscreen, injectControlStyle } from "./ui/panel";
 

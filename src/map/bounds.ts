@@ -1,13 +1,15 @@
-import maplibregl from "maplibre-gl";
+// import maplibregl from "maplibre-gl";
 import { LngLatBoundsLike, Map } from "maplibre-gl";
+
+import * as maplibregl from "maplibre-gl";
 
 /**
  * Smoothly zooms/centers the map to given bounds.
- * Falls back to easeTo() if bounds are degenerate (single point).
+ * Falls back to easeTo() if bounds are degenerate or invalid.
  */
 export function fitMapToBounds(
-  map: Map,
-  bounds: LngLatBoundsLike,
+  map: maplibregl.Map,
+  boundsLike: maplibregl.LngLatBoundsLike,
   options: {
     padding?: number;
     maxZoom?: number;
@@ -16,12 +18,28 @@ export function fitMapToBounds(
 ) {
   const { padding = 40, maxZoom = 13, duration = 1000 } = options;
 
-  // Defensive: if it's a single coordinate pair, easeTo() instead.
-  const b = maplibregl.LngLatBounds.convert(bounds);
-  if (b.getNorthEast().equals(b.getSouthWest())) {
-    map.easeTo({ center: b.getCenter(), zoom: maxZoom, duration });
-  } else {
+  try {
+    const b = maplibregl.LngLatBounds.convert(boundsLike);
+    const ne = b.getNorthEast?.();
+    const sw = b.getSouthWest?.();
+
+    // Defensive: if invalid or zero-area, fall back to easing to center
+    if (
+      !ne ||
+      !sw ||
+      typeof ne.lng !== "number" ||
+      typeof sw.lng !== "number" ||
+      ne.lng === sw.lng ||
+      ne.lat === sw.lat
+    ) {
+      const center = b.getCenter ? b.getCenter() : { lng: 0, lat: 0 };
+      map.easeTo({ center, zoom: maxZoom, duration });
+      return;
+    }
+
     map.fitBounds(b, { padding, maxZoom, duration });
+  } catch (err) {
+    console.warn("[fitMapToBounds] invalid bounds provided:", boundsLike, err);
   }
 }
 

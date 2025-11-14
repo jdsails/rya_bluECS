@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>OpenBridge Automation Demo</title>
+    <style>
+      body {
+        font-family: sans-serif;
+      }
+      #automation-demo {
+        padding: 24px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+      .automation-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        border: 1px solid #eee;
+        border-radius: 8px;
+        margin: 8px;
+        padding: 12px;
+        min-width: 160px;
+        min-height: 120px;
+        box-sizing: border-box;
+        background: #fafcff;
+      }
+      .automation-label {
+        font-size: 12px;
+        text-align: center;
+        margin-bottom: 8px;
+        word-break: break-all;
+        max-width: 180px;
+      }
+      .automation-btn-row {
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .automation-btn-row button {
+        padding: 2px 6px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OpenBridge Automation Gallery</h1>
+    <p>
+      Click 'i' to copy the import code, or 'd' to copy the deploy code for each
+      automation.
+    </p>
+    <div id="automation-demo"></div>
+    <script
+      type="module"
+      src="/src/open-bridge-demos/automation-demo.ts"
+    ></script>
+  </body>
+</html>

@@ -1,9 +1,20 @@
 import * as maplibregl from "maplibre-gl";
 import { haversineNm, formatLatLonForDisplay } from "../utils/geo";
-import { injectPanelCSS } from "../ui/panel";
 import { getCssVar } from "../utils/helpers";
 import { exportRoute, exportGpx } from "../route/gpx";
 import { fitMapToBounds } from "../map/bounds";
+import { setupRoutePanel } from "./manager-setup";
+import {
+  setActiveRoute,
+  setSelectedRoute,
+  syncActiveRouteToEditor,
+  toggleRouteVisibility,
+  addRouteLayers,
+  removeRouteLayers,
+  deleteSavedRoute,
+  finalizeCurrentRoute,
+  routeTotalDistance,
+} from "./manager-working";
 /* --- Route draw & manager control --- */
 export class RouteDrawControl implements maplibregl.IControl {
   private container!: HTMLElement;
@@ -28,6 +39,7 @@ export class RouteDrawControl implements maplibregl.IControl {
     sourceId?: string;
     lineLayerId?: string;
     pointLayerId?: string;
+    bounds?: maplibregl.LngLatBounds | null;
   }[] = [];
   private activeRouteIndex = -1;
   private providedRoutes: {
@@ -35,45 +47,17 @@ export class RouteDrawControl implements maplibregl.IControl {
     waypoints: [number, number][];
     waypointNames: string[];
     visible: boolean;
+    provided: boolean;
     selected: boolean;
     sourceId?: string;
     lineLayerId?: string;
     pointLayerId?: string;
+    bounds?: maplibregl.LngLatBounds | null;
   }[] = [];
   onAdd(map: maplibregl.Map) {
     this.map = map;
     this.container = document.createElement("div");
-    injectPanelCSS();
-    this.routePanel = document.getElementById("route-panel") as HTMLElement;
-
-    // Create the route panel if it doesn't exist, and set up the structure for active, working, and provided routes.
-    if (!this.routePanel) {
-      this.routePanel = document.createElement("div");
-      this.routePanel.id = "route-panel";
-      this.routePanel.innerHTML = `
-        <div id="route-panel-header">
-          <span id="route-panel-title">Route Manager</span>
-          <obc-icon-button id="route-panel-toggle" title="Collapse"><obi-chevron-double-right-google></obi-chevron-double-right-google></obc-icon-button>
-        </div>
-        <div id="route-toolbar" style="padding:10px 15px 0 15px; display:flex; gap:6px; align-items:center;">
-          <obc-icon-button id="route-toolbar-start" title="Start New Route"><obi-navigation-route></obi-navigation-route></obc-icon-button>
-          <obc-icon-button id="route-toolbar-stop" title="End Route" disabled><obi-generic-line-end-point></obi-generic-line-end-point></obc-icon-button>
-          <obc-icon-button id="route-toolbar-export" title="Export GPX"><obi-route-export-iec></obi-route-export-iec></obc-icon-button>
-        </div>
-        <div id="route-panel-body">
-          <div id="active-route-edit"></div>
-          <div id="working-routes-section" style="display:none;">
-            <h3>Working Routes</h3>
-            <div id="working-routes-list"></div>
-          </div>
-          <div id="provided-routes-section" style="display:none;">
-            <label for="provided-routes-list">Provided Routes</label>
-            <div id="provided-routes-list"></div>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(this.routePanel);
-    }
+    this.routePanel = setupRoutePanel();
 
     // Always update the lists, not replace the panel.
     const activeRouteEdit = this.routePanel.querySelector(
@@ -166,7 +150,23 @@ export class RouteDrawControl implements maplibregl.IControl {
         (r, i) => (r.active = i === this.activeRouteIndex),
       );
       // no route layers created yet — _updateRouteSource updates editor only
-      this._syncActiveRouteToEditor(this.savedRoutes);
+      syncActiveRouteToEditor(
+        this.savedRoutes,
+        this.activeRouteIndex,
+        (name) => {
+          this.routeName = name;
+        },
+        (wps) => {
+          this.waypoints = wps;
+        },
+        (names) => {
+          this.waypointNames = names;
+        },
+        this.markers,
+        this._createMarkerAt.bind(this),
+        this._updateRouteSource.bind(this),
+        this.updateActiveRouteData.bind(this),
+      );
       this._renderSavedRoutes();
       this._renderProvidedRoutes();
       this._updateRoutePanel();
@@ -181,21 +181,33 @@ export class RouteDrawControl implements maplibregl.IControl {
       //if (this.activeRouteIndex >= 0 && this.savedRoutes[this.activeRouteIndex]) {
       //  this.savedRoutes[this.activeRouteIndex].active = false;
       //}
-      this.activeRouteIndex = -1;
-      this._finalizeCurrentRoute(this.savedRoutes);
+      if (
+        this.activeRouteIndex >= 0 &&
+        this.savedRoutes[this.activeRouteIndex]
+      ) {
+        this.savedRoutes[this.activeRouteIndex].active = false;
+        finalizeCurrentRoute(
+          this.savedRoutes,
+          this.activeRouteIndex,
+          this.routeName,
+          this.waypoints,
+          this.waypointNames,
+          (i, routes) =>
+            addRouteLayers(i, routes, "saved", this.map!, removeRouteLayers),
+          this.map!,
+        );
+      }
       this._renderSavedRoutes();
       this._renderProvidedRoutes();
       this._updateRoutePanel();
-      // this.updateActiveRouteData(this.waypoints);
+      this.updateActiveRouteData(this.waypoints);
     };
 
     exportBtn.onclick = () => {
-      if (
-        this.activeRouteIndex >= 0 &&
-        this.activeRouteIndex < this.savedRoutes.length
-      ) {
-        // Use the modular exportSavedRoute function
-        exportRoute(this.savedRoutes[this.activeRouteIndex]);
+      const route = this.savedRoutes[this.activeRouteIndex];
+      if (route) {
+        // Only export if a valid route exists
+        exportRoute(route);
       } else {
         // fallback to editor export
         exportGpx(this.routeName, this.waypoints);
@@ -284,20 +296,51 @@ export class RouteDrawControl implements maplibregl.IControl {
       const index = this.markers.indexOf(marker);
       if (index !== -1) {
         this.waypoints[index] = [newPos.lng, newPos.lat];
+
         if (
           this.activeRouteIndex >= 0 &&
           this.activeRouteIndex < this.savedRoutes.length
         ) {
-          this.savedRoutes[this.activeRouteIndex].waypoints[index] = [
-            newPos.lng,
-            newPos.lat,
-          ];
+          const activeRoute = this.savedRoutes[this.activeRouteIndex];
+          if (activeRoute && Array.isArray(activeRoute.waypoints)) {
+            activeRoute.waypoints[index] = [newPos.lng, newPos.lat];
+
+            // update editor source and panel live
+            this._updateRouteSource();
+            this.updateActiveRouteData(this.waypoints);
+            this._updateRoutePanel();
+            this._saveEditedRoute(this.activeRouteIndex);
+            finalizeCurrentRoute(
+              this.savedRoutes,
+              this.activeRouteIndex,
+              this.routeName,
+              this.waypoints,
+              this.waypointNames,
+              (i, routes) =>
+                addRouteLayers(
+                  i,
+                  routes,
+                  "saved",
+                  this.map!,
+                  removeRouteLayers,
+                ),
+              this.map!,
+            );
+          } else {
+            console.warn(
+              "[RouteDrag] Active route undefined or missing waypoints:",
+              this.activeRouteIndex,
+              this.savedRoutes,
+            );
+          }
+        } else {
+          console.warn(
+            "[RouteDrag] Invalid activeRouteIndex:",
+            this.activeRouteIndex,
+            "Saved routes length:",
+            this.savedRoutes.length,
+          );
         }
-        // update editor source and panel live
-        this._updateRouteSource();
-        this.updateActiveRouteData(this.waypoints);
-        this._updateRoutePanel();
-        this._finalizeCurrentRoute(this.savedRoutes);
       }
     });
 
@@ -566,14 +609,23 @@ export class RouteDrawControl implements maplibregl.IControl {
     this._updateRouteSource();
     this.updateActiveRouteData(this.waypoints);
     this._updateRoutePanel();
-    this._finalizeCurrentRoute(this.savedRoutes);
+    finalizeCurrentRoute(
+      this.savedRoutes,
+      this.activeRouteIndex,
+      this.routeName,
+      this.waypoints,
+      this.waypointNames,
+      (i, routes) =>
+        addRouteLayers(i, routes, "saved", this.map!, removeRouteLayers),
+      this.map!,
+    );
   }
 
   onRemove() {
     if (this.routePanel) this.routePanel.remove();
     if (!this.map) return;
     for (let i = 0; i < this.savedRoutes.length; ++i)
-      this._removeRouteLayers(i, this.savedRoutes);
+      removeRouteLayers(i, this.savedRoutes, "saved", this.map!);
   }
 
   private _showContextMenu(
@@ -792,8 +844,8 @@ export class RouteDrawControl implements maplibregl.IControl {
             waypoints: parsed.waypoints,
             waypointNames: parsed.waypointNames,
             visible: false,
-            active: false,
             provided: true,
+            selected: false,
           });
           console.debug(
             `[routes] loaded ${fname} (${parsed.waypoints.length} wpts) `,
@@ -867,7 +919,19 @@ export class RouteDrawControl implements maplibregl.IControl {
         : `<obi-checkbox-uncheck-google size="small"></obi-checkbox-uncheck-google>`;
       visibleBtn.onclick = (ev) => {
         ev.stopPropagation();
-        this._toggleRouteVisibility(idx, this.savedRoutes, "saved");
+        toggleRouteVisibility(
+          idx,
+          this.savedRoutes,
+          "saved",
+          this.map!,
+          addRouteLayers,
+          removeRouteLayers,
+          fitMapToBounds,
+          () => this._renderProvidedRoutes(),
+          () => this._renderSavedRoutes(),
+          this.providedRoutes,
+          this.savedRoutes,
+        );
         // Update icon and title after toggling
         const isVisible = this.savedRoutes[idx].visible;
         visibleBtn.innerHTML = isVisible
@@ -888,13 +952,45 @@ export class RouteDrawControl implements maplibregl.IControl {
       const detailsDiv = document.createElement("div");
       detailsDiv.className = "route-item-details";
       detailsDiv.style.display = expanded ? "block" : "none";
-      detailsDiv.innerHTML = `Waypoints: ${route.waypoints.length}<br>Total: ${this._routeTotalDistance(route).toFixed(2)} NM`;
+      detailsDiv.innerHTML = `Waypoints: ${route.waypoints.length}<br>Total: ${routeTotalDistance(route).toFixed(2)} NM`;
 
       nameSpan.onclick = (ev) => {
         ev.stopPropagation();
         expanded = !expanded;
         detailsDiv.style.display = expanded ? "block" : "none";
-        this._setActiveRoute(idx, this.savedRoutes);
+        setActiveRoute(
+          idx,
+          this.savedRoutes,
+          (i) => {
+            this.activeRouteIndex = i;
+          },
+          (routes) =>
+            syncActiveRouteToEditor(
+              routes,
+              this.activeRouteIndex,
+              (name) => {
+                this.routeName = name;
+              },
+              (wps) => {
+                this.waypoints = wps;
+              },
+              (names) => {
+                this.waypointNames = names;
+              },
+              this.markers,
+              this._createMarkerAt.bind(this),
+              this._updateRouteSource.bind(this),
+              this.updateActiveRouteData.bind(this),
+            ),
+          (routes) => this._renderSavedRoutes(),
+          (routes) => this._renderProvidedRoutes(),
+          () => this._updateRoutePanel(),
+          () => this._updateRouteSource(),
+          (wps) => this.updateActiveRouteData(wps),
+          this.savedRoutes,
+          this.providedRoutes,
+          this.waypoints,
+        );
       };
 
       // Actions
@@ -919,7 +1015,35 @@ export class RouteDrawControl implements maplibregl.IControl {
       delBtn.innerHTML = `<obi-delete-google></obi-delete-google>`;
       delBtn.onclick = (ev) => {
         ev.stopPropagation();
-        this._deleteSavedRoute(idx, this.savedRoutes);
+        deleteSavedRoute(
+          idx,
+          this.savedRoutes,
+          "saved",
+          this.map!,
+          removeRouteLayers,
+          (i) => {
+            this.activeRouteIndex = i;
+          },
+          //          (routes, activeIdx, setRouteName, setWaypoints, setWaypointNames, markers, createMarkerAt, updateRouteSource, updateActiveRouteData) =>
+          syncActiveRouteToEditor,
+          () => this._renderSavedRoutes(),
+          //() => this._renderProvidedRoutes(),
+          () => this._updateRoutePanel(),
+          () => this._updateRouteSource(),
+          (wps) => this.updateActiveRouteData(wps),
+          // this.savedRoutes,
+          this.waypoints,
+          this.markers,
+          (name) => {
+            this.routeName = name;
+          },
+          (wps) => {
+            this.waypoints = wps;
+          },
+          (names) => {
+            this.waypointNames = names;
+          },
+        );
       };
       actions.appendChild(delBtn);
 
@@ -933,7 +1057,39 @@ export class RouteDrawControl implements maplibregl.IControl {
       div.onclick = () => {
         expanded = !expanded;
         detailsDiv.style.display = expanded ? "block" : "none";
-        this._setActiveRoute(idx, this.savedRoutes);
+        setActiveRoute(
+          idx,
+          this.savedRoutes,
+          (i) => {
+            this.activeRouteIndex = i;
+          },
+          (routes) =>
+            syncActiveRouteToEditor(
+              routes,
+              this.activeRouteIndex,
+              (name) => {
+                this.routeName = name;
+              },
+              (wps) => {
+                this.waypoints = wps;
+              },
+              (names) => {
+                this.waypointNames = names;
+              },
+              this.markers,
+              this._createMarkerAt.bind(this),
+              this._updateRouteSource.bind(this),
+              this.updateActiveRouteData.bind(this),
+            ),
+          (routes) => this._renderSavedRoutes(),
+          (routes) => this._renderProvidedRoutes(),
+          () => this._updateRoutePanel(),
+          () => this._updateRouteSource(),
+          (wps) => this.updateActiveRouteData(wps),
+          this.savedRoutes,
+          this.providedRoutes,
+          this.waypoints,
+        );
       };
 
       listDiv.appendChild(div);
@@ -979,7 +1135,19 @@ export class RouteDrawControl implements maplibregl.IControl {
         : `<obi-checkbox-uncheck-google size="small"></obi-checkbox-uncheck-google>`;
       visibleBtn.onclick = (ev) => {
         ev.stopPropagation();
-        this._toggleRouteVisibility(idx, this.providedRoutes, "provided");
+        toggleRouteVisibility(
+          idx,
+          this.providedRoutes,
+          "provided",
+          this.map!,
+          addRouteLayers,
+          removeRouteLayers,
+          fitMapToBounds,
+          () => this._renderProvidedRoutes(),
+          () => this._renderSavedRoutes(),
+          this.providedRoutes,
+          this.savedRoutes,
+        );
         // Update icon and title after toggling
         const isVisible = route.visible;
         visibleBtn.innerHTML = isVisible
@@ -990,7 +1158,7 @@ export class RouteDrawControl implements maplibregl.IControl {
 
       // Route name span
       const nameSpan = document.createElement("span");
-      nameSpan.textContent = route.name + " (copy - rename)";
+      nameSpan.textContent = route.name;
       nameSpan.style.flex = "1";
       nameSpan.style.userSelect = "none";
       nameSpan.style.marginLeft = "5px";
@@ -1000,13 +1168,12 @@ export class RouteDrawControl implements maplibregl.IControl {
       const detailsDiv = document.createElement("div");
       detailsDiv.className = "route-item-details";
       detailsDiv.style.display = expanded ? "block" : "none";
-      detailsDiv.innerHTML = `Waypoints: ${route.waypoints.length}<br>Total: ${this._routeTotalDistance(route).toFixed(2)} NM`;
+      detailsDiv.innerHTML = `Waypoints: ${route.waypoints.length}<br>Total: ${routeTotalDistance(route).toFixed(2)} NM`;
 
       nameSpan.onclick = (ev) => {
         ev.stopPropagation();
         expanded = !expanded;
         detailsDiv.style.display = expanded ? "block" : "none";
-        this._setSelectedRoute(idx, this.providedRoutes);
       };
 
       // Actions
@@ -1015,7 +1182,7 @@ export class RouteDrawControl implements maplibregl.IControl {
       // Load / Copy to Working button
       const loadBtn = document.createElement("obc-icon-button");
       loadBtn.title = `Load ${route.name} to Working Routes`;
-      loadBtn.innerHTML = `<obi-load-iec></obi-load-iec>`;
+      loadBtn.innerHTML = `<obi-save-proposal></obi-save-proposal>`;
       loadBtn.onclick = (ev) => {
         ev.stopPropagation();
         this._copyProvidedRouteToWorking(idx, route);
@@ -1032,7 +1199,6 @@ export class RouteDrawControl implements maplibregl.IControl {
       };
 
       actions.appendChild(exportBtn);
-
       div.appendChild(visibleBtn);
       div.appendChild(nameSpan);
       div.appendChild(actions);
@@ -1041,221 +1207,11 @@ export class RouteDrawControl implements maplibregl.IControl {
       div.onclick = () => {
         expanded = !expanded;
         detailsDiv.style.display = expanded ? "block" : "none";
-        this._setActiveRoute(idx, this.providedRoutes);
       };
       listDiv.appendChild(div);
     });
   }
-  private _setActiveRoute(index: number, routes: any[]) {
-    if (index < 0 || index >= routes.length) return;
-    routes.forEach((r: any, i: number) => (r.active = i === index));
-    this.activeRouteIndex = index;
-    this._syncActiveRouteToEditor(routes);
-    // render lists relevant to that routes array:
-    if (routes === this.savedRoutes) this._renderSavedRoutes();
-    else if (routes === this.providedRoutes) this._renderProvidedRoutes();
-    this._updateRoutePanel();
-    this._updateRouteSource();
-    this.updateActiveRouteData(this.waypoints);
-  }
-  private _setSelectedRoute(index: number, routes: any[]) {
-    if (index < 0 || index >= routes.length) return;
-    routes.forEach((r, i) => (r.active = i === index));
-    this.activeRouteIndex = index;
-    this._syncActiveRouteToEditor(routes);
-    this._renderSavedRoutes();
-    this._updateRoutePanel();
-    this._updateRouteSource();
-    this.updateActiveRouteData(this.waypoints);
-  }
-  private _syncActiveRouteToEditor(routes: any[]) {
-    // remove old markers
-    for (const m of this.markers) m.remove();
-    this.markers = [];
 
-    if (
-      this.activeRouteIndex >= 0 &&
-      routes &&
-      this.activeRouteIndex < routes.length
-    ) {
-      const route = routes[this.activeRouteIndex];
-      this.routeName = route.name || "";
-      this.waypoints = route.waypoints.map((p: any) => [...p]);
-      this.waypointNames = (route.waypointNames || []).map((n: any) => n);
-      for (let i = 0; i < this.waypoints.length; ++i)
-        this._createMarkerAt(
-          i,
-          this.waypoints[i],
-          this.waypointNames[i] || "",
-          false,
-        );
-      this._updateRouteSource();
-      this.updateActiveRouteData(this.waypoints);
-    } else {
-      this.routeName = "";
-      this.waypoints = [];
-      this.waypointNames = [];
-      this.markers.forEach((m) => m.remove());
-      this.markers = [];
-    }
-  }
-
-  private _toggleRouteVisibility(index: number, routes: any[], ns = "saved") {
-    if (!this.map) return;
-    if (!routes || index < 0 || index >= routes.length) return;
-    const route = routes[index];
-    route.visible = !route.visible;
-    if (route.visible) this._addRouteLayers(index, routes, ns);
-    else this._removeRouteLayers(index, routes, ns);
-
-    // optionally fit to bounds if route now visible
-    if (route.visible && route.waypoints?.length > 0) {
-      const bounds = new maplibregl.LngLatBounds();
-      route.waypoints.forEach((p: [number, number]) => bounds.extend(p));
-      fitMapToBounds(this.map!, bounds);
-    }
-
-    // re-render only the list you updated to avoid reentrancy
-    if (routes === this.providedRoutes) this._renderProvidedRoutes();
-    else if (routes === this.savedRoutes) this._renderSavedRoutes();
-  }
-  // use this version of _addRouteLayers
-  private _addRouteLayers(index: number, routes: any[], ns = "saved") {
-    if (!this.map) return;
-    if (!routes || index < 0 || index >= routes.length) return;
-    const route = routes[index];
-
-    // remove any existing layers/sources for that (index,ns)
-    this._removeRouteLayers(index, routes, ns);
-
-    const sourceId = `route-src-${ns}-${index}`;
-    const lineLayerId = `route-line-${ns}-${index}`;
-    const pointLayerId = `route-points-${ns}-${index}`;
-
-    const features: any[] = [];
-    if (route.waypoints?.length >= 2)
-      features.push({
-        type: "Feature",
-        geometry: { type: "LineString", coordinates: route.waypoints },
-        properties: {},
-      });
-    for (let i = 0; i < (route.waypoints?.length || 0); ++i)
-      features.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: route.waypoints[i] },
-        properties: { name: route.waypointNames?.[i] || "" },
-      });
-
-    try {
-      this.map.addSource(sourceId, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features },
-      });
-      this.map.addLayer({
-        id: lineLayerId,
-        type: "line",
-        source: sourceId,
-        paint: {
-          "line-color": "#0077b6",
-          "line-width": 3,
-          "line-dasharray": [2, 2],
-        },
-      });
-      this.map.addLayer({
-        id: pointLayerId,
-        type: "circle",
-        source: sourceId,
-        paint: {
-          "circle-radius": 6,
-          "circle-color": "#2a7ecf",
-          "circle-stroke-color": "#fff",
-          "circle-stroke-width": 2,
-        },
-      });
-      route.sourceId = sourceId;
-      route.lineLayerId = lineLayerId;
-      route.pointLayerId = pointLayerId;
-    } catch (err) {
-      console.warn("[routes] failed to add route layers", ns, index, err);
-    }
-  }
-
-  // use this version of _removeRouteLayers
-  private _removeRouteLayers(index: number, routes: any[], ns = "saved") {
-    if (!this.map) return;
-    if (!routes || index < 0 || index >= routes.length) return;
-    const route = routes[index];
-    if (!route) return;
-    try {
-      // Use stored ids if present; fall back to namespaced ids
-      const lineId = route.lineLayerId || `route-line-${ns}-${index}`;
-      const pointId = route.pointLayerId || `route-points-${ns}-${index}`;
-      const srcId = route.sourceId || `route-src-${ns}-${index}`;
-
-      if (lineId && this.map.getLayer(lineId)) this.map.removeLayer(lineId);
-      if (pointId && this.map.getLayer(pointId)) this.map.removeLayer(pointId);
-      if (srcId && this.map.getSource(srcId)) this.map.removeSource(srcId);
-    } catch (err) {
-      console.warn("[routes] error removing layers", ns, index, err);
-    }
-    // clear stored ids
-    route.lineLayerId = undefined;
-    route.pointLayerId = undefined;
-    route.sourceId = undefined;
-  }
-  private _deleteSavedRoute(index: number, routes: any[]) {
-    if (!this.map) return;
-    this._removeRouteLayers(index, routes);
-    routes.splice(index, 1);
-    if (this.activeRouteIndex === index) {
-      if (routes.length > 0) {
-        this.activeRouteIndex = 0;
-        routes.forEach((r, i) => (r.active = i === 0));
-        this._syncActiveRouteToEditor(routes);
-      } else {
-        this.activeRouteIndex = -1;
-        this.waypoints = [];
-        this.waypointNames = [];
-        this.markers.forEach((m) => m.remove());
-        this.markers = [];
-        this.routeName = "";
-      }
-    } else if (this.activeRouteIndex > index) {
-      this.activeRouteIndex--;
-    }
-    // rebuild visible route layers to keep source/layer ids consistent with index
-    for (let i = 0; i <= routes.length; ++i) this._removeRouteLayers(i, routes);
-    for (let i = 0; i < this.savedRoutes.length; ++i)
-      if (routes[i].visible) this._addRouteLayers(i, routes);
-    this._renderSavedRoutes();
-    this._renderProvidedRoutes();
-    this._updateRoutePanel();
-    this._updateRouteSource();
-    this.updateActiveRouteData(this.waypoints);
-  }
-  private _finalizeCurrentRoute(routes: any[]) {
-    if (
-      this.activeRouteIndex >= 0 &&
-      this.activeRouteIndex < this.savedRoutes.length
-    ) {
-      routes[this.activeRouteIndex].name = this.routeName;
-      routes[this.activeRouteIndex].waypoints = this.waypoints.map((p) => [
-        ...p,
-      ]);
-      routes[this.activeRouteIndex].waypointNames = [...this.waypointNames];
-      routes[this.activeRouteIndex].visible = true;
-      routes[this.activeRouteIndex].active = true;
-      // add route layers for the saved route
-      this._addRouteLayers(this.activeRouteIndex, this.savedRoutes);
-    }
-  }
-
-  private _routeTotalDistance(route: { waypoints: [number, number][] }) {
-    let tot = 0;
-    for (let i = 1; i < route.waypoints.length; ++i)
-      tot += haversineNm(route.waypoints[i - 1], route.waypoints[i]);
-    return tot;
-  }
   private _copyProvidedRouteToWorking(idx: number, route: any) {
     if (!this.map) return;
     const newRoute = {
@@ -1274,11 +1230,65 @@ export class RouteDrawControl implements maplibregl.IControl {
     // Add the new working route
     this.savedRoutes.push(newRoute);
     this.activeRouteIndex = this.savedRoutes.length - 1;
-
+    addRouteLayers(
+      this.activeRouteIndex,
+      this.savedRoutes,
+      "saved",
+      this.map!,
+      removeRouteLayers,
+    );
     // Sync state and redraw
-    this._syncActiveRouteToEditor(this.savedRoutes);
+    syncActiveRouteToEditor(
+      this.savedRoutes,
+      this.activeRouteIndex,
+      (name) => {
+        this.routeName = name;
+      },
+      (wps) => {
+        this.waypoints = wps;
+      },
+      (names) => {
+        this.waypointNames = names;
+      },
+      this.markers,
+      this._createMarkerAt.bind(this),
+      this._updateRouteSource.bind(this),
+      this.updateActiveRouteData.bind(this),
+    );
     this.updateActiveRouteData(this.waypoints);
-    this._setActiveRoute(idx, this.savedRoutes);
+    setActiveRoute(
+      idx,
+      this.savedRoutes,
+      (i) => {
+        this.activeRouteIndex = i;
+      },
+      (routes) =>
+        syncActiveRouteToEditor(
+          routes,
+          this.activeRouteIndex,
+          (name) => {
+            this.routeName = name;
+          },
+          (wps) => {
+            this.waypoints = wps;
+          },
+          (names) => {
+            this.waypointNames = names;
+          },
+          this.markers,
+          this._createMarkerAt.bind(this),
+          this._updateRouteSource.bind(this),
+          this.updateActiveRouteData.bind(this),
+        ),
+      (routes) => this._renderSavedRoutes(),
+      (routes) => this._renderProvidedRoutes(),
+      () => this._updateRoutePanel(),
+      () => this._updateRouteSource(),
+      (wps) => this.updateActiveRouteData(wps),
+      this.savedRoutes,
+      this.providedRoutes,
+      this.waypoints,
+    );
     this._renderSavedRoutes();
     this._updateRoutePanel();
     this._updateRouteSource();
@@ -1307,12 +1317,17 @@ export class RouteDrawControl implements maplibregl.IControl {
     route.active = false;
 
     // Redraw and refresh the panel
-    this._finalizeCurrentRoute(this.savedRoutes);
+    finalizeCurrentRoute(
+      this.savedRoutes,
+      this.activeRouteIndex,
+      this.routeName,
+      this.waypoints,
+      this.waypointNames,
+      (i, routes) =>
+        addRouteLayers(i, routes, "saved", this.map!, removeRouteLayers),
+      this.map!,
+    );
     this._renderSavedRoutes();
     this._updateRoutePanel();
-
-    console.debug(
-      `[routes] saved edited route: ${route.name} (${route.waypoints.length} wpts)`,
-    );
   }
 }

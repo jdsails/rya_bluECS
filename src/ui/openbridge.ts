@@ -5,6 +5,7 @@ import "@oicl/openbridge-webcomponents/dist/icons/icon-route-export-iec";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-route";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-generic-line-end-point";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-delete-google";
+import "@oicl/openbridge-webcomponents/dist/icons/icon-save-proposal";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-waypoint-edit-iec";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-waypoint-delete-iec";
 import "@oicl/openbridge-webcomponents/dist/icons/icon-waypoint-add-iec";

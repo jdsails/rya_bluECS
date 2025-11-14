@@ -1,0 +1,18 @@
+{
+  "name": "bluECS - node",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "ms-vscode.vscode-typescript-next"
+      ]
+    }
+  },
+  "remoteUser": "vscode",
+  "forwardPorts": [5173],
+  "postCreateCommand": "pnpm install || npm install"
+}

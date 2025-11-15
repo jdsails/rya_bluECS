@@ -12,7 +12,6 @@
       ]
     }
   },
-  "remoteUser": "vscode",
   "forwardPorts": [5173],
   "postCreateCommand": "pnpm install || npm install"
 }
